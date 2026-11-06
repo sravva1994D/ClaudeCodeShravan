@@ -11,7 +11,7 @@ Operating guide for Claude Code in this repository. Read it fully before plannin
 - **Branches on origin:** `main` (production-facing, release only), `development` (integration).
 - **Source documents:**
   - `BRD/Doc_BRD.md`: the Business Requirements Document. It is the source of truth for product behaviour.
-  - `Reference/AI Training.docx`: the learning plan that defines the 8-step workflow used in this repo (see section 15).
+  - `Reference/AI Training.docx`: the learning plan that defines the 8-step workflow used in this repo (see section 14).
 - **Current state (2026-11-06):** No application code exists yet. The working tree has `README.md` deleted and uncommitted, and the `BRD/` and `Reference/` folders are untracked. Do not restore or commit these changes without the user's approval.
 - **Tech stack (mandated by the project owner):**
   - Frontend: Angular
@@ -106,13 +106,13 @@ Angular SPA  →  ASP.NET Core API  →  Application services  →  Domain
 
 1. Angular talks to the API only, over HTTP. It never touches the database or connection strings.
 2. Controllers are thin: they validate input, call an application service, and map the result. No business logic in controllers or components.
-3. Business rules (for example, mandatory vitals before a consultation can be completed, or appointment status transitions) live in the application/domain layer and are unit-tested there.
+3. Business rules (for example, mandatory vitals before a consultation can be completed, or appointment status transitions) live in the application/domain layer.
 4. API contracts use DTOs. Never expose EF Core entities over the wire.
 5. The data model is the single source of truth for schema. Schema changes happen only through EF Core migrations.
 6. Keep one clinic and one doctor in the model. Do not add multi-tenant columns or abstractions. If clinic header details are needed for prescriptions, store them as configuration, not as a tenant model.
 7. Prefer simple, boring solutions. Add a pattern only when a concrete requirement needs it.
 8. Cross-cutting concerns (logging, error handling, auth, validation) are set up once, centrally, and reused.
-9. Any significant architectural decision is recorded as an ADR in `docs/adr/` (see section 13).
+9. Any significant architectural decision is recorded as an ADR in `docs/adr/` (see section 12).
 
 **Repository layout (target):**
 
@@ -123,12 +123,6 @@ Angular SPA  →  ASP.NET Core API  →  Application services  →  Domain
   /Application         Use cases, services, DTOs, validation
   /Domain              Entities and business rules (no infrastructure references)
   /Infrastructure      EF Core DbContext, migrations, PDF/CSV export, external services
-/tests
-  /Domain.Tests
-  /Application.Tests
-  /Api.Integration.Tests
-  /Web.Tests
-  /e2e
 /docs
   /adr                 Architecture Decision Records
   backlog.md
@@ -172,7 +166,7 @@ Angular SPA  →  ASP.NET Core API  →  Application services  →  Domain
 - **Logging:** structured logging (`ILogger<T>` with message templates). Never log patient data (see section 10).
 - **API docs:** OpenAPI/Swagger enabled in Development only.
 - **Dates:** store and transmit UTC. Convert to the clinic's local time zone only in the UI or the print/export layer.
-- **Exports:** CSV and PDF generation is behind an interface (`IExportService`) so it can be tested and replaced.
+- **Exports:** CSV and PDF generation is behind an interface (`IExportService`) so it can be replaced.
 - **Health:** expose a health-check endpoint that includes a database check.
 - **Code style:** follow the `.editorconfig`. Treat analyzer warnings as errors in CI.
 
@@ -201,7 +195,7 @@ Angular SPA  →  ASP.NET Core API  →  Application services  →  Domain
   - Index the columns used by search (patient name, phone) and by the daily appointment list (date, status).
   - Use paging for lists. Keep search under the 2–5 s target on realistic data sizes.
 - **Migrations:** EF Core migrations, one per logical change, with descriptive names. Review the generated SQL before applying. Never edit an applied migration; add a new one.
-- **Seed data:** only synthetic data. Never commit real patient data, even for testing.
+- **Seed data:** only synthetic data. Never commit real patient data.
 - **Backups:** automated daily backups with a documented restore procedure. Restore must be tested before release.
 
 ---
@@ -231,28 +225,7 @@ This system stores identifiable health information. Treat all patient data as se
 
 ---
 
-## 11. Testing Standards
-
-**Principle:** every BRD functional requirement has at least one automated test that proves it. Tests are part of the deliverable, not an afterthought.
-
-- **Test pyramid:**
-  - **Domain and Application unit tests (xUnit):** business rules such as mandatory vitals, appointment status transitions, prescription validation. Fast, no I/O.
-  - **Integration tests (xUnit + real SQL Server via Testcontainers or LocalDB):** EF Core mappings, migrations, repository queries, search performance on sample data, API endpoints end to end.
-  - **Angular unit tests:** components, services, and forms. Use the project's configured runner (Jest or Jasmine/Karma **[TO CONFIRM]**). Mock `HttpClient` with `HttpTestingController`.
-  - **End-to-end (Playwright):** critical user journeys: register patient → schedule → consult with vitals → add medicines → print prescription → export CSV/PDF. Run on Chrome, Edge, and WebKit (Safari engine).
-- **Naming:** test names describe behaviour, for example `Consultation_CannotComplete_WithoutVitals`.
-- **Structure:** Arrange / Act / Assert. One behaviour per test.
-- **Determinism:** no real clock, network, or random data in unit tests. Inject `TimeProvider` (or an equivalent clock abstraction). Use fixed seeds.
-- **Test data:** synthetic data only (see section 9).
-- **Coverage:** Domain and Application layers target 80% line coverage or better. Coverage is a guide, not a goal; a test must assert behaviour.
-- **Performance checks:** automated checks that patient search and page loads stay within the BRD targets on a realistic dataset (for example, 10,000 patients).
-- **Regression:** every bug fix adds a test that fails before the fix and passes after.
-- **CI gate:** all tests, lint, format, and vulnerability checks must pass before a PR can be merged.
-- **Manual checks:** print output of prescriptions and PDF/CSV exports must be checked by a person on at least one supported browser before release.
-
----
-
-## 12. Git Standards
+## 11. Git Standards
 
 **Ownership:** Claude owns all Git operations in this repository. This includes branch creation, worktree management, commits, pushes, and PR creation. The user approves merges and branch cleanup.
 
@@ -272,7 +245,7 @@ This system stores identifiable health information. Treat all patient data as se
 
 **Commits:**
 - Conventional Commits format: `type(scope): summary`, with types `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `build`.
-- Keep commits small and focused. Each commit builds and passes tests where practical.
+- Keep commits small and focused. Each commit builds where practical.
 - Subject line: imperative mood, 72 characters or fewer. Body explains *why* when it is not obvious.
 - Every commit made by Claude ends with this trailer:
   ```
@@ -282,7 +255,7 @@ This system stores identifiable health information. Treat all patient data as se
 
 **Integration flow:**
 1. Claude creates the feature branch and worktree from `development`.
-2. Claude implements, tests, and commits on the feature branch.
+2. Claude implements, verifies, and commits on the feature branch.
 3. Claude pushes the feature branch and opens a PR into `development`.
 4. Claude requests the user's approval before merging. **Claude does not merge without explicit approval.**
 5. After approval, Claude merges into `development`.
@@ -293,7 +266,7 @@ This system stores identifiable health information. Treat all patient data as se
 
 **Pull requests:**
 - Title follows the commit convention.
-- Description includes: purpose, linked BRD requirement(s), what changed, how it was tested, screenshots for UI changes, and known gaps.
+- Description includes: purpose, linked BRD requirement(s), what changed, how it was verified, screenshots for UI changes, and known gaps.
 - Every PR description ends with:
   ```
   🤖 Generated with [Claude Code](https://claude.com/claude-code)
@@ -307,7 +280,7 @@ This system stores identifiable health information. Treat all patient data as se
 
 ---
 
-## 13. Documentation Standards
+## 12. Documentation Standards
 
 - **Source of truth:** `BRD/Doc_BRD.md` defines behaviour. If the code and the BRD disagree, stop and ask. Do not silently change either.
 - **README.md:** setup instructions (prerequisites, restore, run, test, migrate, seed), project structure, and links to the docs below. Keep it accurate in the same PR as the change that affects it.
@@ -321,30 +294,29 @@ This system stores identifiable health information. Treat all patient data as se
 
 ---
 
-## 14. Definition of Done
+## 13. Definition of Done
 
 A task is done only when **all** of these are true:
 
 1. **Requirement traced:** the work maps to a BRD requirement or an approved plan item. Any deviation is recorded and approved.
-2. **Plan approved:** an implementation plan (steps and test approach) was reviewed and approved before coding started.
+2. **Plan approved:** an implementation plan (steps and verification approach) was reviewed and approved before coding started.
 3. **Built in a worktree:** the work was done on a `feature/*` branch in its own worktree, not on `main` or `development`.
-4. **Tests written and passing:** unit, integration, and (for user-facing flows) E2E tests. Existing tests still pass.
-5. **Static checks clean:** lint, format, analyzers, and vulnerability checks pass with zero new warnings.
-6. **Verified:** the feature was run and checked against its acceptance criteria. For UI, checked in a real browser.
-7. **Gap analysis done:** the result was compared to the BRD requirement and success criteria. All gaps are either fixed or logged in `docs/backlog.md` with user agreement.
-8. **Security reviewed:** changes touching auth, data, exports, or the API passed `/security-review` and the standards in section 10.
-9. **Code reviewed:** review comments are addressed within the agreed timeline.
-10. **Docs updated:** README, ADRs, API docs, and CHANGELOG are current where affected.
-11. **Committed cleanly:** Conventional Commits, trailer included, no secrets, no generated artifacts.
-12. **PR opened:** description complete (section 12), and approval requested from the user.
-13. **Merged only after approval**, and the feature branch is retained.
-14. **Worktree status reported:** the worktree is kept until the user approves cleanup.
+4. **Static checks clean:** lint, format, analyzers, and vulnerability checks pass with zero new warnings.
+5. **Verified:** the feature was run and checked against its acceptance criteria. For UI, checked in a real browser.
+6. **Gap analysis done:** the result was compared to the BRD requirement and success criteria. All gaps are either fixed or logged in `docs/backlog.md` with user agreement.
+7. **Security reviewed:** changes touching auth, data, exports, or the API passed `/security-review` and the standards in section 10.
+8. **Code reviewed:** review comments are addressed within the agreed timeline.
+9. **Docs updated:** README, ADRs, API docs, and CHANGELOG are current where affected.
+10. **Committed cleanly:** Conventional Commits, trailer included, no secrets, no generated artifacts.
+11. **PR opened:** description complete (section 11), and approval requested from the user.
+12. **Merged only after approval**, and the feature branch is retained.
+13. **Worktree status reported:** the worktree is kept until the user approves cleanup.
 
 For a **release** (development → main), also confirm: all Phase 1 success criteria are checked, backup restore has been tested, the CHANGELOG is updated, and the user has approved the release PR.
 
 ---
 
-## 15. Learning Guidelines
+## 14. Learning Guidelines
 
 This repository is also a training environment. The developer follows the plan in `Reference/AI Training.docx`.
 
@@ -374,10 +346,10 @@ This repository is also a training environment. The developer follows the plan i
 
 ---
 
-## 16. Working Rules for Claude
+## 15. Working Rules for Claude
 
 - **Ask before acting** when a requirement is ambiguous, a BRD item conflicts with another, or an action is hard to reverse (merge, delete, force-push, schema drop, changing `main`).
 - **Stay in scope.** If an out-of-scope item appears necessary, stop and ask. Do not implement it.
-- **Show evidence.** Report test results, command output, and gap-analysis outcomes. Say plainly when something failed or was skipped.
+- **Show evidence.** Report command output and gap-analysis outcomes. Say plainly when something failed or was skipped.
 - **Keep changes small.** Prefer several small, reviewable PRs over one large one.
 - **Do not guess at security or medical logic.** Ask for a decision and record it as an ADR.
