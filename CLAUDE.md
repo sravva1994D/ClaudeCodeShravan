@@ -101,14 +101,14 @@ If a feature is only "nice to have," record it as a backlog idea in `docs/backlo
 ```
 Angular SPA  →  ASP.NET Core API  →  Application services  →  Domain  
                                           ↓
-                                 Data access (EF Core)  →  SQL Server
+                                 Data access (Dapper)  →  SQL Server
 ```
 
 1. Angular talks to the API only, over HTTP. It never touches the database or connection strings.
 2. Controllers are thin: they validate input, call an application service, and map the result. No business logic in controllers or components.
 3. Business rules (for example, mandatory vitals before a consultation can be completed, or appointment status transitions) live in the application/domain layer and are unit-tested there.
-4. API contracts use DTOs. Never expose EF Core entities over the wire.
-5. The data model is the single source of truth for schema. Schema changes happen only through EF Core migrations.
+4. API contracts use DTOs. Never expose database row types or domain entities over the wire.
+5. The schema is defined in versioned SQL migration scripts (see section 9). Schema changes happen only through those scripts, never by ad-hoc DDL against a shared database. **[TO CONFIRM: migration tool, recommended DbUp]**
 6. Keep one clinic and one doctor in the model. Do not add multi-tenant columns or abstractions. If clinic header details are needed for prescriptions, store them as configuration, not as a tenant model.
 7. Prefer simple, boring solutions. Add a pattern only when a concrete requirement needs it.
 8. Cross-cutting concerns (logging, error handling, auth, validation) are set up once, centrally, and reused.
@@ -122,7 +122,7 @@ Angular SPA  →  ASP.NET Core API  →  Application services  →  Domain
   /Api                 ASP.NET Core Web API
   /Application         Use cases, services, DTOs, validation
   /Domain              Entities and business rules (no infrastructure references)
-  /Infrastructure      EF Core DbContext, migrations, PDF/CSV export, external services
+  /Infrastructure      Dapper repositories, SQL migration scripts, connection factory, PDF/CSV export, external services
 /tests
   /Domain.Tests
   /Application.Tests
@@ -163,7 +163,7 @@ Angular SPA  →  ASP.NET Core API  →  Application services  →  Domain
 
 - **Target:** latest LTS version of .NET. Use `<Nullable>enable</Nullable>` and `<ImplicitUsings>enable</ImplicitUsings>` in every project.
 - **API style:** controllers or minimal APIs, used consistently. Choose one per project and do not mix them.
-- **Layering:** controllers → application services → EF Core. Application services take and return DTOs.
+- **Layering:** controllers → application services → Dapper repositories. Application services take and return DTOs. Repositories map rows to Domain entities or DTOs; no row type leaks upward.
 - **Async:** every I/O method is `async` and returns `Task` or `Task<T>`. Accept and pass `CancellationToken`. No `.Result` or `.Wait()`.
 - **Validation:** validate requests at the boundary (data annotations or FluentValidation). Business-rule validation lives in the application layer and returns clear errors.
 - **Errors:** return RFC 7807 `ProblemDetails` for all errors. Do not leak stack traces or internal details to clients. Use a central exception handler.
@@ -200,7 +200,8 @@ Angular SPA  →  ASP.NET Core API  →  Application services  →  Domain
   - Parameterised queries only. No string concatenation of user input.
   - Index the columns used by search (patient name, phone) and by the daily appointment list (date, status).
   - Use paging for lists. Keep search under the 2–5 s target on realistic data sizes.
-- **Migrations:** EF Core migrations, one per logical change, with descriptive names. Review the generated SQL before applying. Never edit an applied migration; add a new one.
+- **Migrations:** versioned SQL scripts, one per logical change, with descriptive names (for example, `0003_AddPrescriptionItems.sql`). Review each script before applying. Never edit an applied script; add a new one. Dapper does not generate schema, so the scripts are hand-written and reviewed.
+- **Dapper rules:** use parameterised `DynamicParameters` or anonymous-object parameters only. Keep SQL in the repository layer, not in controllers or services. Use explicit column lists in every query. Pass `CancellationToken` through `CommandDefinition`. Open connections through a factory, and never hold a connection in a singleton.
 - **Seed data:** only synthetic data. Never commit real patient data, even for testing.
 - **Backups:** automated daily backups with a documented restore procedure. Restore must be tested before release.
 
@@ -237,7 +238,7 @@ This system stores identifiable health information. Treat all patient data as se
 
 - **Test pyramid:**
   - **Domain and Application unit tests (xUnit):** business rules such as mandatory vitals, appointment status transitions, prescription validation. Fast, no I/O.
-  - **Integration tests (xUnit + real SQL Server via Testcontainers or LocalDB):** EF Core mappings, migrations, repository queries, search performance on sample data, API endpoints end to end.
+  - **Integration tests (xUnit + real SQL Server via Testcontainers or LocalDB):** SQL migration scripts, Dapper repository queries, search performance on sample data, API endpoints end to end.
   - **Angular unit tests:** components, services, and forms. Use the project's configured runner (Jest or Jasmine/Karma **[TO CONFIRM]**). Mock `HttpClient` with `HttpTestingController`.
   - **End-to-end (Playwright):** critical user journeys: register patient → schedule → consult with vitals → add medicines → print prescription → export CSV/PDF. Run on Chrome, Edge, and WebKit (Safari engine).
 - **Naming:** test names describe behaviour, for example `Consultation_CannotComplete_WithoutVitals`.
