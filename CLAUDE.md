@@ -101,16 +101,17 @@ If a feature is only "nice to have," record it as a backlog idea in `docs/backlo
 ```
 Angular SPA  →  ASP.NET Core API  →  Application services  →  Domain  
                                           ↓
-                                 Data access (EF Core)  →  SQL Server
+                    Data access (Dapper repositories)  →  SQL Server
 ```
 
 1. Angular talks to the API only, over HTTP. It never touches the database or connection strings.
 2. Controllers are thin: they validate input, call an application service, and map the result. No business logic in controllers or components.
 3. Business rules (for example, mandatory vitals before a consultation can be completed, or appointment status transitions) live in the application/domain layer and are unit-tested there.
-4. API contracts use DTOs. Never expose EF Core entities over the wire.
-5. The data model is the single source of truth for schema. Schema changes happen only through EF Core migrations.
+4. API contracts use DTOs. Never expose domain entities over the wire.
+5. The database schema is the single source of truth. Schema changes happen through version-controlled SQL migration scripts (DbUp).
 6. Keep one clinic and one doctor in the model. Do not add multi-tenant columns or abstractions. If clinic header details are needed for prescriptions, store them as configuration, not as a tenant model.
-7. Prefer simple, boring solutions. Add a pattern only when a concrete requirement needs it.
+7. Repositories wrap Dapper and provide a clean interface to application services. Never call Dapper directly from services.
+8. Prefer simple, boring solutions. Add a pattern only when a concrete requirement needs it.
 8. Cross-cutting concerns (logging, error handling, auth, validation) are set up once, centrally, and reused.
 9. Any significant architectural decision is recorded as an ADR in `docs/adr/` (see section 13).
 
@@ -122,7 +123,7 @@ Angular SPA  →  ASP.NET Core API  →  Application services  →  Domain
   /Api                 ASP.NET Core Web API
   /Application         Use cases, services, DTOs, validation
   /Domain              Entities and business rules (no infrastructure references)
-  /Infrastructure      EF Core DbContext, migrations, PDF/CSV export, external services
+  /Infrastructure      Dapper repositories, DbUp migrations, PDF/CSV export, external services
 /tests
   /Domain.Tests
   /Application.Tests
@@ -163,7 +164,7 @@ Angular SPA  →  ASP.NET Core API  →  Application services  →  Domain
 
 - **Target:** latest LTS version of .NET. Use `<Nullable>enable</Nullable>` and `<ImplicitUsings>enable</ImplicitUsings>` in every project.
 - **API style:** controllers or minimal APIs, used consistently. Choose one per project and do not mix them.
-- **Layering:** controllers → application services → EF Core. Application services take and return DTOs.
+- **Layering:** controllers → application services → Dapper repositories. Application services take and return DTOs.
 - **Async:** every I/O method is `async` and returns `Task` or `Task<T>`. Accept and pass `CancellationToken`. No `.Result` or `.Wait()`.
 - **Validation:** validate requests at the boundary (data annotations or FluentValidation). Business-rule validation lives in the application layer and returns clear errors.
 - **Errors:** return RFC 7807 `ProblemDetails` for all errors. Do not leak stack traces or internal details to clients. Use a central exception handler.
@@ -175,6 +176,15 @@ Angular SPA  →  ASP.NET Core API  →  Application services  →  Domain
 - **Exports:** CSV and PDF generation is behind an interface (`IExportService`) so it can be tested and replaced.
 - **Health:** expose a health-check endpoint that includes a database check.
 - **Code style:** follow the `.editorconfig`. Treat analyzer warnings as errors in CI.
+- **Data Access with Dapper:**
+  - Use Repository pattern: one interface per aggregate root (Patient, Appointment, Visit, Prescription).
+  - Every repository method is `async Task<T>` and accepts `CancellationToken`.
+  - Repositories return DTOs, never domain entities.
+  - Inject `IDbConnectionFactory` into repositories; manage connections via using statements.
+  - All SQL uses parameterized queries. Never concatenate user input into SQL.
+  - For complex queries (joins, multiple result sets), use Dapper's `QueryMultiple` or compose smaller queries.
+  - Log database errors at ERROR level; translate to domain-level errors in application services.
+  - Repositories are stateless; services orchestrate changes.
 
 ---
 
@@ -198,9 +208,17 @@ Angular SPA  →  ASP.NET Core API  →  Application services  →  Domain
 - **Queries:**
   - No `SELECT *`. Name every column.
   - Parameterised queries only. No string concatenation of user input.
-  - Index the columns used by search (patient name, phone) and by the daily appointment list (date, status).
-  - Use paging for lists. Keep search under the 2–5 s target on realistic data sizes.
-- **Migrations:** EF Core migrations, one per logical change, with descriptive names. Review the generated SQL before applying. Never edit an applied migration; add a new one.
+  - Use `WHERE IsDeleted = 0` for all soft-deleted entities.
+  - Use `OFFSET/FETCH NEXT` for paging (not TOP).
+  - Index the columns used by search: `Patients.FullName`, `Patients.PhoneNumber`, `Appointments.ScheduledDateUtc`, `Appointments.Status`.
+  - Keep search queries under the 2–5 s target on realistic data sizes.
+- **Schema management:**
+  - All database changes are version-controlled SQL scripts in `src/Infrastructure/Migrations/`.
+  - Scripts numbered sequentially: `001_InitialSchema.sql`, `002_AddIndexes.sql`, etc.
+  - DbUp executes migrations on application startup. Each script runs exactly once.
+  - Never edit or delete an applied migration. Create a new migration to undo changes.
+  - Review the generated SQL in the PR before merging.
+  - Migrations embedded in assembly; no external tool required.
 - **Seed data:** only synthetic data. Never commit real patient data, even for testing.
 - **Backups:** automated daily backups with a documented restore procedure. Restore must be tested before release.
 
@@ -237,7 +255,7 @@ This system stores identifiable health information. Treat all patient data as se
 
 - **Test pyramid:**
   - **Domain and Application unit tests (xUnit):** business rules such as mandatory vitals, appointment status transitions, prescription validation. Fast, no I/O.
-  - **Integration tests (xUnit + real SQL Server via Testcontainers or LocalDB):** EF Core mappings, migrations, repository queries, search performance on sample data, API endpoints end to end.
+  - **Integration tests (xUnit + real SQL Server via Testcontainers or LocalDB):** Dapper query correctness, repository result mapping, soft-delete logic, index performance, foreign-key constraints, schema correctness. DbUp migrations run in test fixture; test data seeded via SQL or programmatically. Search query performance validated against 2–5 second target on 10,000-patient dataset.
   - **Angular unit tests:** components, services, and forms. Use the project's configured runner (Jest or Jasmine/Karma **[TO CONFIRM]**). Mock `HttpClient` with `HttpTestingController`.
   - **End-to-end (Playwright):** critical user journeys: register patient → schedule → consult with vitals → add medicines → print prescription → export CSV/PDF. Run on Chrome, Edge, and WebKit (Safari engine).
 - **Naming:** test names describe behaviour, for example `Consultation_CannotComplete_WithoutVitals`.
@@ -312,6 +330,9 @@ This system stores identifiable health information. Treat all patient data as se
 - **Source of truth:** `BRD/Doc_BRD.md` defines behaviour. If the code and the BRD disagree, stop and ask. Do not silently change either.
 - **README.md:** setup instructions (prerequisites, restore, run, test, migrate, seed), project structure, and links to the docs below. Keep it accurate in the same PR as the change that affects it.
 - **ADRs:** significant decisions (database engine, auth approach, encryption, PDF library, hosting) go in `docs/adr/NNNN-short-title.md` with: context, decision, alternatives, and consequences. Number ADRs sequentially. Do not rewrite accepted ADRs; supersede them.
+  - ADR-0001: Dapper over EF Core — rationale, trade-offs, performance expectations
+  - ADR-0002: DbUp for Schema Migration — decision vs. Flyway/hand-written scripts
+  - ADR-0003: Soft-Delete Strategy — when/how records marked deleted, audit trail
 - **API documentation:** generated from OpenAPI. Endpoints without XML/summary docs are not complete.
 - **Code comments:** explain *why*, not *what*. Do not comment obvious code. Public domain and application APIs have XML doc comments.
 - **Changelog:** `CHANGELOG.md` updated on each release PR, grouped by Added, Changed, Fixed, Security.
