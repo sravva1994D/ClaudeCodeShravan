@@ -1,2 +1,0 @@
-# ClaudeCodeShravan
-Claude practice
